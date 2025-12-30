@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Song, SongPart, ChordBlock, ChordDefinition, Note } from './types';
+import { Song, SongPart, ChordBlock, ChordDefinition, Note, GenreType } from './types';
 import { engine } from './services/audioEngine';
 import { generateSongLyrics } from './services/geminiService';
+import { generateProgression } from './services/generativeEngine';
 import ChordSelector from './components/ChordSelector';
 import { 
   Play, Pause, Plus, Music, Settings, 
@@ -41,7 +42,11 @@ const App: React.FC = () => {
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
+  const [isWandOpen, setIsWandOpen] = useState(false);
   
+  // Wand Settings
+  const [wandGenre, setWandGenre] = useState<GenreType>('Pop');
+
   // Playback State
   const [isPlaying, setIsPlaying] = useState(false);
   const [playingPartId, setPlayingPartId] = useState<string | null>(null);
@@ -61,6 +66,7 @@ const App: React.FC = () => {
   const activePartIdRef = useRef(activePartId);
   const arrangementIndexRef = useRef(0);
   const queuedArrangementIndexRef = useRef<number | null>(null);
+  const isLoadedRef = useRef(false); // Guard for initial load vs save
 
   // --- Persistence Logic ---
 
@@ -89,10 +95,14 @@ const App: React.FC = () => {
         console.error("Failed to parse library", e);
       }
     }
+    
+    // Mark as loaded so subsequent effects can save safely
+    isLoadedRef.current = true;
   }, []);
 
   // Auto-save workspace on song change
   useEffect(() => {
+    if (!isLoadedRef.current) return; // Prevent overwriting with initial state on load
     songRef.current = song;
     localStorage.setItem('chordFiles_current', JSON.stringify(song));
   }, [song]);
@@ -314,9 +324,17 @@ const App: React.FC = () => {
     if (window.confirm("Start a new project? Unsaved changes to the current project will be lost.")) {
       stopPlayback();
       const newSong = createInitialSong();
+      
+      // Explicitly clear the 'current' storage to avoid merge issues
+      localStorage.removeItem('chordFiles_current');
+      
       setSong(newSong);
       setActivePartId(newSong.parts[0].id);
       setIsLibraryOpen(false);
+      
+      // Reset isLoaded ref briefly to prevent race condition saving old data
+      isLoadedRef.current = false;
+      setTimeout(() => { isLoadedRef.current = true; }, 100);
     }
   };
 
@@ -419,22 +437,12 @@ const App: React.FC = () => {
 
   // --- Features ---
 
-  const handleMagicWand = () => {
-    const root = song.keyRoot;
-    const diatonic = getDiatonicChords(root, 'Major');
-    const progIndices = [0, 4, 5, 3]; 
-    
-    const newBlocks: ChordBlock[] = progIndices.map(i => {
-       if (!diatonic[i]) return null;
-       return {
-         id: Math.random().toString(36).substr(2, 9),
-         root: diatonic[i].root,
-         quality: diatonic[i].quality,
-         duration: 4,
-         functionLabel: 'Main',
-         roman: diatonic[i].roman
-       };
-    }).filter(Boolean) as ChordBlock[];
+  const handleMagicWandClick = () => {
+      setIsWandOpen(true);
+  };
+
+  const executeMagicWand = () => {
+    const newBlocks = generateProgression(song.keyRoot, wandGenre, 4);
 
     const updatedParts = song.parts.map(p => {
       if (p.id === activePartId) {
@@ -444,6 +452,7 @@ const App: React.FC = () => {
     });
     
     setSong({ ...song, parts: updatedParts });
+    setIsWandOpen(false);
   };
 
   const handleGenerateLyrics = async () => {
@@ -532,7 +541,7 @@ const App: React.FC = () => {
                 </button>
 
                 <button 
-                  onClick={handleMagicWand}
+                  onClick={handleMagicWandClick}
                   className="w-9 h-9 rounded-full flex items-center justify-center bg-gray-800 border border-gray-700 text-gray-400 hover:text-accent-orange hover:border-accent-orange transition-colors"
                 >
                   <Wand2 size={16} />
@@ -675,25 +684,58 @@ const App: React.FC = () => {
               <div className="flex bg-gray-900 border-b border-gray-800 overflow-x-auto no-scrollbar flex-shrink-0">
                 {song.parts.map(part => {
                   const romanProg = part.progression.map(b => b.roman).filter(Boolean).slice(0, 4).join(' - ');
+                  
+                  // NEW: Calculate progress for this part if it is playing
+                  const isPlayingThisPart = isPlaying && playingPartId === part.id;
+                  let progress = 0;
+                  let transitionDuration = 0;
+
+                  if (isPlayingThisPart && playbackIndex >= 0 && playbackIndex < part.progression.length) {
+                       const totalBeats = part.progression.reduce((s, b) => s + b.duration, 0);
+                       let accumulatedBeats = 0;
+                       for (let i=0; i <= playbackIndex; i++) {
+                           accumulatedBeats += part.progression[i].duration;
+                       }
+                       progress = totalBeats > 0 ? (accumulatedBeats / totalBeats) * 100 : 0;
+                       
+                       const currentBlock = part.progression[playbackIndex];
+                       const beatDuration = 60 / song.bpm;
+                       transitionDuration = currentBlock.duration * beatDuration;
+                  }
+
                   return (
                     <button
                       key={part.id}
                       onClick={() => handlePartSelect(part.id)}
                       className={clsx(
-                        "px-5 py-3 text-left border-b-2 transition-colors min-w-[100px]",
+                        "px-5 py-3 text-left border-b-2 transition-colors min-w-[100px] relative overflow-hidden",
                         activePartId === part.id 
                           ? "border-accent-blue bg-gray-800" 
                           : "border-transparent hover:bg-gray-800/50"
                       )}
                     >
-                      <div className={clsx("text-xs font-bold uppercase tracking-wide", activePartId === part.id ? "text-white" : "text-gray-600")}>
-                        {part.name}
-                      </div>
-                      <div className="flex items-center gap-1 mt-1">
-                          <div className="text-[10px] text-accent-blue font-mono h-3 truncate opacity-80 max-w-[80px]">
-                            {romanProg || "Empty"}
+                      {/* Progress Overlay */}
+                      <div 
+                        className={clsx(
+                            "absolute inset-y-0 left-0 bg-accent-blue/10 z-0 pointer-events-none ease-linear",
+                            isPlayingThisPart ? "transition-all" : "transition-none"
+                        )}
+                        style={{
+                            width: `${isPlayingThisPart ? progress : 0}%`,
+                            transitionDuration: `${isPlayingThisPart ? transitionDuration : 0}s`
+                        }}
+                      />
+
+                      <div className="relative z-10">
+                          <div className={clsx("text-xs font-bold uppercase tracking-wide", activePartId === part.id ? "text-white" : "text-gray-600")}>
+                            {part.name}
                           </div>
-                          {part.lyrics && <div className="w-1.5 h-1.5 rounded-full bg-accent-purple/70" title="Has Lyrics" />}
+                          <div className="flex items-center gap-1 mt-1">
+                              <div className="text-[10px] text-accent-blue font-mono h-3 truncate opacity-80 max-w-[80px]">
+                                {romanProg || "Empty"}
+                              </div>
+                              {part.lyrics && <div className="w-1.5 h-1.5 rounded-full bg-accent-purple/70" title="Has Lyrics" />}
+                          </div>
                       </div>
                     </button>
                   );
@@ -969,6 +1011,55 @@ const App: React.FC = () => {
               </div>
            </div>
         </div>
+      )}
+
+      {/* Wand Modal */}
+      {isWandOpen && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+              <div className="bg-gray-900 w-full max-w-sm rounded-2xl border border-gray-800 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+                  <div className="flex justify-between items-center p-4 border-b border-gray-800 bg-gray-800/50">
+                      <div className="flex items-center gap-2">
+                          <Wand2 size={20} className="text-accent-orange" />
+                          <h2 className="text-lg font-bold">Auto-Generate</h2>
+                      </div>
+                      <button onClick={() => setIsWandOpen(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
+                  </div>
+                  
+                  <div className="p-6">
+                      <p className="text-sm text-gray-400 mb-6">
+                          Generates a theory-based progression for <b>{activePart.name}</b>. This will append to your current chords.
+                      </p>
+
+                      <div className="space-y-4 mb-6">
+                          <label className="block text-sm font-bold text-gray-500 uppercase tracking-wider">Select Style</label>
+                          <div className="grid grid-cols-2 gap-3">
+                              {(['Pop', 'Jazz', 'Rock', 'LoFi'] as GenreType[]).map(g => (
+                                  <button
+                                    key={g}
+                                    onClick={() => setWandGenre(g)}
+                                    className={clsx(
+                                        "py-3 rounded-xl border font-bold text-sm transition-all",
+                                        wandGenre === g 
+                                            ? "bg-accent-orange border-accent-orange text-black shadow-lg shadow-accent-orange/20" 
+                                            : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500"
+                                    )}
+                                  >
+                                      {g}
+                                  </button>
+                              ))}
+                          </div>
+                      </div>
+
+                      <button 
+                        onClick={executeMagicWand}
+                        className="w-full py-4 bg-white text-black font-bold rounded-xl hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"
+                      >
+                          <Sparkles size={18} className="text-accent-orange" />
+                          Generate Progression
+                      </button>
+                  </div>
+              </div>
+          </div>
       )}
 
       {/* Settings Modal */}

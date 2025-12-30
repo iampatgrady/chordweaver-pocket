@@ -22,11 +22,14 @@ export interface ChordBlock {
   roman?: string; // Analysis (e.g., "V7")
 }
 
+export type GenreType = 'Pop' | 'Jazz' | 'Rock' | 'LoFi';
+
 export interface SongPart {
   id: string;
   name: string; // "Verse", "Chorus"
   progression: ChordBlock[];
   lyrics?: string; // Persisted lyrics for this part
+  type?: 'Verse' | 'Chorus' | 'Bridge'; // For generative context
 }
 
 export interface Song {

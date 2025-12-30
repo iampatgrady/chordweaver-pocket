@@ -133,22 +133,30 @@ export const getAllSuggestions = (keyRoot: string) => {
   };
 };
 
-export const PRESETS = {
-  "Pop Anthem": [
-    { rootIdx: 0, quality: 'Maj' }, // I
-    { rootIdx: 4, quality: 'Maj' }, // V
-    { rootIdx: 5, quality: 'min' }, // vi
-    { rootIdx: 3, quality: 'Maj' }  // IV
-  ],
-  "Jazz Turnaround": [
-    { rootIdx: 1, quality: 'min' }, // ii
-    { rootIdx: 4, quality: '7' },   // V7
-    { rootIdx: 0, quality: 'Maj7' } // I
-  ],
-  "Emotional": [
-    { rootIdx: 0, quality: 'Maj' },
-    { rootIdx: 2, quality: 'min' },
-    { rootIdx: 3, quality: 'Maj' },
-    { rootIdx: 4, quality: 'Maj' }
-  ]
+// --- NEW HELPERS FOR GENERATIVE ENGINE ---
+
+export const getChordByRoman = (keyRoot: string, roman: string): ChordDefinition | undefined => {
+    const all = getAllSuggestions(keyRoot);
+    const combined = [...all.main, ...all.secondary, ...all.modal];
+    return combined.find(c => c.roman === roman);
+};
+
+export const getHarmonicFunction = (roman: string): 'Tonic' | 'Subdominant' | 'Dominant' => {
+    // Pop/Rock simplified functional harmony map
+    const map: Record<string, 'Tonic' | 'Subdominant' | 'Dominant'> = {
+        'I': 'Tonic', 'i': 'Tonic',
+        'iii': 'Tonic', 'III': 'Tonic', 'bIII': 'Tonic',
+        'vi': 'Tonic', 'VI': 'Tonic',
+        
+        'ii': 'Subdominant', 'ii°': 'Subdominant',
+        'IV': 'Subdominant', 'iv': 'Subdominant',
+        
+        'V': 'Dominant', 'v': 'Dominant', 'V7': 'Dominant',
+        'vii°': 'Dominant', 'bVII': 'Dominant' 
+    };
+    
+    // Treat Secondary Dominants as Dominants locally, though they function as V of Target
+    if (roman.startsWith('V/')) return 'Dominant';
+    
+    return map[roman] || 'Tonic';
 };
