@@ -1,0 +1,5 @@
+{
+  "name": "Chord Weaver",
+  "description": "A mobile-first songwriting tool bridging music theory and instant creativity with smart playback and Gemini-powered lyric ideas.",
+  "requestFramePermissions": []
+}
